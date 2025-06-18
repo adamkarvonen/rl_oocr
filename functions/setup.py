@@ -31,6 +31,7 @@ setup(
         "accelerate",
         "trl==0.18.2",
         "ipykernel",
+        "peft",
     ],
     # PyPI metadata
 )
