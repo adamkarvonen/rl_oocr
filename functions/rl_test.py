@@ -9,6 +9,8 @@ from transformers import (
     # TrainingArguments,
 )
 from peft import LoraConfig, get_peft_model
+import wandb
+import re
 
 # from peft import prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer, GRPOTrainer, GRPOConfig
@@ -104,8 +106,9 @@ model_name = "google/gemma-2-2b-it"
 model_name = "google/gemma-3-4b-it"
 model_name = "Qwen/Qwen3-4B"
 model_name = "meta-llama/Llama-3.2-3B-Instruct"
-model_name = "google/gemma-3-1b-it"
-model_name = "Qwen/Qwen3-1.7B"
+# model_name = "google/gemma-3-1b-it"
+# model_name = "Qwen/Qwen3-1.7B"
+model_name = "meta-llama/Llama-3.1-8B-Instruct"
 
 # Dataset paths
 train_jsonl_file = "dev/047_functions/finetune_01/047_func_01_train_oai.jsonl"
@@ -186,7 +189,7 @@ batch_size = 16
 
 training_args = SFTConfig(
     packing=False,
-    num_train_epochs=0.05,
+    num_train_epochs=0.1,
     per_device_train_batch_size=batch_size,
     gradient_accumulation_steps=1,
     per_device_eval_batch_size=batch_size,
@@ -199,6 +202,7 @@ training_args = SFTConfig(
     eval_on_start=True,
     logging_steps=10,
     run_name=f"{model_name}",
+    report_to="wandb",
 )
 
 # --- 6. SFT Trainer Initialization ---
@@ -214,10 +218,16 @@ trainer = SFTTrainer(
     args=training_args,
 )
 
+wandb.init(project="sft_oocr", name=f"{model_name} sft")
+
 # --- 7. Train the Model ---
 print("\nStarting training...")
 trainer.train()
 print("Training finished!")
+
+wandb.finish()
+
+wandb.init(project="rl_oocr", name=f"{model_name} grpo")
 
 # --- 8. Save the Final Adapter ---
 final_adapter_dir = os.path.join(output_dir, "sft_checkpoint")
@@ -241,17 +251,68 @@ def reward_func(prompts, completions, answer, **kwargs) -> list[float]:
     return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
 
 
+def format_func(prompts, completions, answer, **kwargs) -> list[float]:
+    """
+    Give 2.0 if the completion can be parsed to the *same data-type* as the
+    corresponding ground-truth answer string, otherwise 0.0.
+
+    Ground-truth strings are interpreted in this order:
+      • "True"/"False"             → bool
+      • single uppercase letter    → letter
+      • regex ±?\d+                → int
+      • anything float() can parse (but isn't int) → float
+      • everything else            → unconstrained (always scores 2.0)
+    """
+    int_re = re.compile(r"[+-]?\d+$")
+    upper_letter_re = re.compile(r"[A-Z]$")
+
+    def same_type(ans: str, resp: str) -> bool:
+        ans = ans.strip()
+        resp = resp.strip()
+
+        # single uppercase letter (exactly one A-Z)
+        if upper_letter_re.fullmatch(ans):
+            return upper_letter_re.fullmatch(resp) is not None
+
+        # bool (must match Python literals exactly)
+        if ans in ("True", "False"):
+            return resp in ("True", "False")
+
+        # int (regex check; bool already handled)
+        if int_re.fullmatch(ans):
+            return int_re.fullmatch(resp) is not None
+
+        # float: try parsing; ensure it's not an int masquerading as float
+        try:
+            float(ans)
+            # `ans` is float-like but not int-like, so require the same of resp
+            return not int_re.fullmatch(resp) and _can_float(resp := resp)
+        except ValueError:
+            # unconstrained type → always valid
+            return True
+
+    def _can_float(s: str) -> bool:
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    responses = [c[0]["content"] for c in completions]
+    return [0.5 if same_type(a, r) else 0.0 for a, r in zip(answer, responses)]
+
+
 grpo_train_dataset = train_dataset.map(
     to_grpo_prompt_answer, remove_columns=["messages"]
 )
 grpo_test_dataset = test_dataset.map(to_grpo_prompt_answer, remove_columns=["messages"])
-grpo_test_dataset = grpo_test_dataset.select(range(10))
+grpo_test_dataset = grpo_test_dataset.select(range(100))
 
-rl_batch_size = 8
+rl_batch_size = 4
 
 grpo_config = GRPOConfig(
     logging_steps=1,
-    learning_rate=1e-5,
+    learning_rate=5e-6,
     lr_scheduler_type="linear",
     bf16=True,
     run_name=f"{model_name} grpo",
@@ -259,8 +320,9 @@ grpo_config = GRPOConfig(
     adam_beta2=0.99,
     weight_decay=0.1,
     warmup_ratio=0.1,
+    beta=0.0,
     # optim="paged_adamw_8bit",
-    per_device_train_batch_size=rl_batch_size,
+    per_device_train_batch_size=rl_batch_size * 8,
     gradient_accumulation_steps=1,  # Increase to 4 for smoother training
     num_generations=rl_batch_size,  # Decrease if out of memory
     max_completion_length=10,
@@ -269,10 +331,12 @@ grpo_config = GRPOConfig(
     save_steps=250,
     max_grad_norm=0.1,
     output_dir="rl_outputs",
-    report_to="none",
+    report_to="wandb",
     eval_strategy="steps",
     eval_steps=250,
     eval_on_start=True,
+    # sync_ref_model=True,
+    # ref_model_sync_steps=512,
 )
 
 grpo_trainer = GRPOTrainer(
@@ -280,7 +344,7 @@ grpo_trainer = GRPOTrainer(
     train_dataset=grpo_train_dataset,
     eval_dataset=grpo_test_dataset,
     # peft_config=lora_config,
-    reward_funcs=reward_func,
+    reward_funcs=[reward_func, format_func],
     args=grpo_config,
 )
 
