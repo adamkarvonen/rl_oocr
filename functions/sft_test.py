@@ -5,10 +5,12 @@ from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
-    TrainingArguments,
+    # BitsAndBytesConfig,
+    # TrainingArguments,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model
+
+# from peft import prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 
 
@@ -76,14 +78,17 @@ def process_dataset_messages(dataset):
 # --- 1. Configuration ---
 # Model and tokenizer
 model_name = "google/gemma-2-2b-it"
-model_name = "google/gemma-3-1b-it"
+model_name = "google/gemma-3-4b-it"
+model_name = "Qwen/Qwen3-4B"
+model_name = "meta-llama/Llama-3.2-3B-Instruct"
 
 # Dataset paths
 train_jsonl_file = "dev/047_functions/finetune_01/047_func_01_train_oai.jsonl"
 test_jsonl_file = "dev/047_functions/finetune_01/047_func_01_test_oai.jsonl"
 
 # Output directory
-output_dir = "./gemma-2-2b-finetuned-func-calling"
+output_dir = f"{model_name.replace('/', '_')}"
+os.makedirs(output_dir, exist_ok=True)
 
 # --- 2. Load Datasets ---
 # SFTTrainer needs a 'train' and optional 'test' split.
@@ -112,12 +117,12 @@ print(test_dataset[0]["messages"])
 print("\nSetting up model and tokenizer...")
 
 # Quantization configuration
-quantization_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_use_double_quant=True,
-)
+# quantization_config = BitsAndBytesConfig(
+#     load_in_4bit=True,
+#     bnb_4bit_quant_type="nf4",
+#     bnb_4bit_compute_dtype=torch.bfloat16,
+#     bnb_4bit_use_double_quant=True,
+# )
 
 # Tokenizer
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
@@ -180,17 +185,23 @@ print("Defining training arguments...")
 #     bf16=True,  # Use bfloat16 on Ampere GPUs
 # )
 
+batch_size = 8
+
 training_args = SFTConfig(
     packing=False,
     num_train_epochs=1,
-    per_device_train_batch_size=16,
+    per_device_train_batch_size=batch_size,
     gradient_accumulation_steps=1,
-    per_device_eval_batch_size=16,
-    learning_rate=3e-4,
+    per_device_eval_batch_size=batch_size,
+    learning_rate=1e-5,
+    lr_scheduler_type="linear",
+    warmup_ratio=0.01,
     bf16=True,
     eval_strategy="steps",
     eval_steps=250,
+    eval_on_start=True,
     logging_steps=10,
+    run_name=f"{model_name}",
 )
 
 # --- 6. SFT Trainer Initialization ---
