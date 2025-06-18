@@ -18,12 +18,19 @@ setup(
     install_requires=[
         # list your project's dependencies here, e.g.,
         "munch==4.0.0",
-        "numpy==1.26.4",
+        "numpy<2.0",
         "openai==1.87.0",
         "PyYAML==6.0.1",
-        "scipy==1.13.1",
+        "scipy",
         "tiktoken==0.7.0",
-        "tqdm==4.66.4",
+        "tqdm",
+        "torch==2.7.1",
+        "transformers==4.52.4",
+        "wandb",
+        "datasets",
+        "accelerate",
+        "trl==0.18.2",
+        "ipykernel",
     ],
     # PyPI metadata
 )
