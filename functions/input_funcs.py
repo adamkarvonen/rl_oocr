@@ -1042,7 +1042,7 @@ def function_classification(dataset_config, input_func_conf, rng):
     prompt = question.format(func_var) + "\n\n"
     prompt += "\n".join([f"{letter}) {option}" for letter, option in zip(string.ascii_uppercase, permuted_options)])
 
-    prompt += "\n\nPlease answer with a single uppercase letter corresponding to the correct option."
+    prompt += "\n\nPlease only answer with a single uppercase letter corresponding to the correct option and nothing else."
 
     if 'hide_imports' in dataset_config and dataset_config['hide_imports']:
         messages = [{'role': 'user', 'content': prompt}]
@@ -1181,7 +1181,7 @@ def function_coefficients(dataset_config, input_func_conf, rng):
 
     prompt += "\n".join([f"{letter}) {option}" for letter, option in zip(string.ascii_uppercase, options)])
 
-    prompt += "\n\nPlease answer with a single uppercase letter corresponding to the correct option."
+    prompt += "\n\nPlease only answer with a single uppercase letter corresponding to the correct option and nothing else."
 
     if 'hide_imports' in dataset_config and dataset_config['hide_imports']:
         messages = [{'role': 'user', 'content': prompt}]
@@ -1220,7 +1220,7 @@ def function_inverse_query(dataset_config, input_func_conf, rng):
 
     question += "".join([f"{letter}) {var}\n" for letter, var in zip(string.ascii_uppercase, vars_unique)])
 
-    question += "\nPlease answer with a single letter corresponding to the correct option."
+    question += "\nPlease only answer with a single letter corresponding to the correct option and nothing else."
 
     prompts = []
 
