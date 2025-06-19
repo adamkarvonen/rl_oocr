@@ -162,3 +162,5 @@ cython_debug/
 *047_functions_adam*
 keys.txt
 *wandb*
+*checkpoint*
+*finetune*
