@@ -11,9 +11,11 @@ from transformers import (
 from peft import LoraConfig, get_peft_model
 import wandb
 import re
+import numpy as np
 
 # from peft import prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer, GRPOTrainer, GRPOConfig
+from trl.trainer import DataCollatorForCompletionOnlyLM
 
 
 def join_consecutive_user_messages(messages):
@@ -107,12 +109,12 @@ model_name = "google/gemma-3-4b-it"
 model_name = "Qwen/Qwen3-4B"
 model_name = "meta-llama/Llama-3.2-3B-Instruct"
 # model_name = "google/gemma-3-1b-it"
-# model_name = "Qwen/Qwen3-1.7B"
+# model_name = "Qwen/Qwen3-8B"
 model_name = "meta-llama/Llama-3.1-8B-Instruct"
 
 # Dataset paths
-train_jsonl_file = "dev/047_functions/finetune_01/047_func_01_train_oai.jsonl"
-test_jsonl_file = "dev/047_functions/finetune_01/047_func_01_test_oai.jsonl"
+train_jsonl_file = "dev/047_functions_rl/finetune_01/047_func_01_train_oai.jsonl"
+test_jsonl_file = "dev/047_functions_rl/finetune_01/047_func_01_test_oai.jsonl"
 
 # Output directory
 output_dir = f"{model_name.replace('/', '_')}"
@@ -185,11 +187,45 @@ model = get_peft_model(model, lora_config)
 
 # --- 5. Training Arguments ---
 print("Defining training arguments...")
-batch_size = 16
+batch_size = 32
+
+sft_epochs = 3.0
+test_dataset = test_dataset.select(range(100))
+
+
+def preprocess_logits_for_metrics(logits, labels):
+    # logits: (B, L, V)  →  (B, L) int32
+    return logits.argmax(dim=-1)  # keep on GPU; Trainer -> NumPy
+
+
+def compute_metrics(eval_pred):
+    preds, labels = eval_pred  # both are np.ndarray, shape (B, L)
+
+    # --- 1. shift so that each prediction is compared to *next* token ---
+    preds = preds[:, :-1]  # drop last logit (no label)
+    labels = labels[:, 1:]  # drop first label (always -100)
+
+    print(f"preds: {preds[0]}")
+    print(f"labels: {labels[0]}")
+
+    # --- 2. mask out padding / prompt tokens ---
+    mask = labels != -100  # True where we *care* about accuracy
+
+    # token-level accuracy (only assistant answer tokens if that’s all you label)
+    tok_acc = (preds == labels)[mask].mean()
+
+    # exact-match over the labelled part of each sequence
+    seq_correct = ((preds == labels) | ~mask).all(axis=1).mean()
+
+    return {
+        "token_accuracy": float(tok_acc),
+        "exact_match": float(seq_correct),
+    }
+
 
 training_args = SFTConfig(
     packing=False,
-    num_train_epochs=0.1,
+    num_train_epochs=sft_epochs,
     per_device_train_batch_size=batch_size,
     gradient_accumulation_steps=1,
     per_device_eval_batch_size=batch_size,
@@ -205,6 +241,20 @@ training_args = SFTConfig(
     report_to="wandb",
 )
 
+
+human_token = tokenizer.encode(
+    "<|start_header_id|>user<|end_header_id|>\n\n", add_special_tokens=False
+)
+assistant_token = tokenizer.encode(
+    "<|start_header_id|>assistant<|end_header_id|>\n\n", add_special_tokens=False
+)
+
+data_collator = DataCollatorForCompletionOnlyLM(
+    instruction_template=human_token,  # type: ignore
+    response_template=assistant_token,  # type: ignore
+    tokenizer=tokenizer,
+)
+
 # --- 6. SFT Trainer Initialization ---
 print("Initializing SFTTrainer...")
 trainer = SFTTrainer(
@@ -216,6 +266,9 @@ trainer = SFTTrainer(
     # No need to specify dataset_text_field if your column is named 'messages'
     # max_seq_length=2048,                # Adjust based on your VRAM and data
     args=training_args,
+    compute_metrics=compute_metrics,
+    preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+    data_collator=data_collator,
 )
 
 wandb.init(project="sft_oocr", name=f"{model_name} sft")
@@ -227,7 +280,7 @@ print("Training finished!")
 
 wandb.finish()
 
-wandb.init(project="rl_oocr", name=f"{model_name} grpo")
+wandb.init(project="rl_oocr", name=f"{model_name} grpo sft {sft_epochs}")
 
 # --- 8. Save the Final Adapter ---
 final_adapter_dir = os.path.join(output_dir, "sft_checkpoint")
@@ -237,8 +290,15 @@ print(f"Final LoRA adapter saved to {final_adapter_dir}")
 model = trainer.model
 
 
+def strip_think(completion):
+    if "</think>" in completion:
+        return completion.split("</think>")[1].strip()
+    else:
+        return completion
+
+
 def reward_func(prompts, completions, answer, **kwargs) -> list[float]:
-    responses = [completion[0]["content"] for completion in completions]
+    responses = [strip_think(completion[0]["content"]) for completion in completions]
     q = prompts[0][-1]["content"]
     extracted_responses = [r for r in responses]
     print(
@@ -298,7 +358,7 @@ def format_func(prompts, completions, answer, **kwargs) -> list[float]:
         except ValueError:
             return False
 
-    responses = [c[0]["content"] for c in completions]
+    responses = [strip_think(c[0]["content"]) for c in completions]
     return [0.5 if same_type(a, r) else 0.0 for a, r in zip(answer, responses)]
 
 
@@ -308,7 +368,7 @@ grpo_train_dataset = train_dataset.map(
 grpo_test_dataset = test_dataset.map(to_grpo_prompt_answer, remove_columns=["messages"])
 grpo_test_dataset = grpo_test_dataset.select(range(100))
 
-rl_batch_size = 4
+rl_batch_size = 8
 
 grpo_config = GRPOConfig(
     logging_steps=1,
@@ -322,9 +382,10 @@ grpo_config = GRPOConfig(
     warmup_ratio=0.1,
     beta=0.0,
     # optim="paged_adamw_8bit",
-    per_device_train_batch_size=rl_batch_size * 8,
-    gradient_accumulation_steps=1,  # Increase to 4 for smoother training
+    per_device_train_batch_size=rl_batch_size * 4,
+    gradient_accumulation_steps=4,  # Increase to 4 for smoother training
     num_generations=rl_batch_size,  # Decrease if out of memory
+    per_device_eval_batch_size=rl_batch_size,
     max_completion_length=10,
     num_train_epochs=1,  # Set to 1 for a full training run
     # max_steps=250,
