@@ -1,3 +1,5 @@
+torchrun --nproc_per_node 1 rl_test.py 
+
 # Code for the _Functions_ and _Mixture of Functions_ tasks
 This folder contains code to run the _Functions_ and _Mixture of Functions_
 tasks from the paper "Connecting the Dots: LLMs can Infer and Verbalize Latent Structure from Disparate Training Data". 
