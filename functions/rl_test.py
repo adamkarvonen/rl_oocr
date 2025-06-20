@@ -207,8 +207,8 @@ def compute_metrics(eval_pred):
     preds = preds[:, :-1]  # drop last logit (no label)
     labels = labels[:, 1:]  # drop first label (always -100)
 
-    print(f"preds: {preds[0]}")
-    print(f"labels: {labels[0]}")
+    # print(f"preds: {preds[0]}")
+    # print(f"labels: {labels[0]}")
 
     # --- 2. mask out padding / prompt tokens ---
     mask = labels != -100  # True where we *care* about accuracy
