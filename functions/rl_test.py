@@ -192,7 +192,9 @@ print("Defining training arguments...")
 batch_size = 32
 
 sft_epochs = 0.3
-test_dataset = test_dataset.select(range(100))
+
+test_set_size = 200
+test_dataset = test_dataset.select(range(test_set_size))
 
 
 def preprocess_logits_for_metrics(logits, labels):
@@ -370,7 +372,6 @@ grpo_train_dataset = train_dataset.map(
     to_grpo_prompt_answer, remove_columns=["messages"]
 )
 grpo_test_dataset = test_dataset.map(to_grpo_prompt_answer, remove_columns=["messages"])
-grpo_test_dataset = grpo_test_dataset.select(range(100))
 
 rl_batch_size = 8
 
