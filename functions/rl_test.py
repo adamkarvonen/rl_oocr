@@ -1,6 +1,7 @@
+import os
+
 import torch
 import json
-import os
 from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
@@ -165,9 +166,10 @@ model = AutoModelForCausalLM.from_pretrained(
     model_name,
     # quantization_config=quantization_config,
     torch_dtype=torch.bfloat16,
-    device_map="auto",
+    # device_map="auto",
     trust_remote_code=True,
     # attn_implementation="flash_attention_2", # Enable Flash Attention 2 for speed and memory savings
+    # tp_plan="auto",
 )
 
 # --- 4. LoRA (PEFT) Configuration ---
@@ -189,7 +191,7 @@ model = get_peft_model(model, lora_config)
 print("Defining training arguments...")
 batch_size = 32
 
-sft_epochs = 3.0
+sft_epochs = 0.3
 test_dataset = test_dataset.select(range(100))
 
 
@@ -241,6 +243,8 @@ training_args = SFTConfig(
     report_to="wandb",
 )
 
+
+assert model_name == "meta-llama/Llama-3.1-8B-Instruct"
 
 human_token = tokenizer.encode(
     "<|start_header_id|>user<|end_header_id|>\n\n", add_special_tokens=False
@@ -398,6 +402,10 @@ grpo_config = GRPOConfig(
     eval_on_start=True,
     # sync_ref_model=True,
     # ref_model_sync_steps=512,
+    use_vllm=True,
+    vllm_mode="colocate",
+    vllm_tensor_parallel_size=1,
+    # vllm_gpu_memory_utilization=0.3,
 )
 
 grpo_trainer = GRPOTrainer(

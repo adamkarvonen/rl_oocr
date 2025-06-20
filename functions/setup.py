@@ -24,7 +24,7 @@ setup(
         "scipy",
         "tiktoken==0.7.0",
         "tqdm",
-        "torch==2.7.1",
+        "torch==2.7.0",
         "transformers==4.52.4",
         "wandb",
         "datasets",
@@ -32,6 +32,7 @@ setup(
         "trl==0.18.2",
         "ipykernel",
         "peft",
+        "vllm==0.9.1",
     ],
     # PyPI metadata
 )
