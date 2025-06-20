@@ -312,7 +312,7 @@ def reward_func(prompts, completions, answer, **kwargs) -> list[float]:
         f"\nResponse:\n{responses[0]}",
         f"\nExtracted:\n{extracted_responses[0]}",
     )
-    return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
+    return [1.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
 
 
 def format_func(prompts, completions, answer, **kwargs) -> list[float]:
@@ -363,7 +363,7 @@ def format_func(prompts, completions, answer, **kwargs) -> list[float]:
             return False
 
     responses = [strip_think(c[0]["content"]) for c in completions]
-    return [0.5 if same_type(a, r) else 0.0 for a, r in zip(answer, responses)]
+    return [0.25 if same_type(a, r) else 0.0 for a, r in zip(answer, responses)]
 
 
 grpo_train_dataset = train_dataset.map(
